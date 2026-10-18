@@ -28,6 +28,80 @@ static class Toolchain
     static string DshPackageDir => Path.Combine(DshPrefix, "node_modules", "@deepseek-ai", "dsh");
     public static string DshBin => Path.Combine(DshPackageDir, "lib", "bin.js");
 
+    /// <summary>
+    /// Whether the two packages the browse-picker patch inserts are installed. The patch cannot work
+    /// without them, and checking here keeps a future slimmed-down dsh from failing to start.
+    /// </summary>
+    public static bool BrowseDirectoryPickerInstalled =>
+        File.Exists(Path.Combine(DshPrefix, "node_modules", "@deepseek-ai",
+            "dsh-host-directory-picker-browse", "package.json")) &&
+        File.Exists(Path.Combine(DshPrefix, "node_modules", "@deepseek-ai",
+            "dsh-host-directory-picker-browse", "lib", "index.js")) &&
+        File.Exists(Path.Combine(DshPrefix, "node_modules", "@deepseek-ai",
+            "dsh-client-ui-directory-picker-browse", "package.json")) &&
+        File.Exists(Path.Combine(DshPrefix, "node_modules", "@deepseek-ai",
+            "dsh-client-ui-directory-picker-browse", "lib", "client.js"));
+
+    /// <summary>
+    /// Patch passed to <c>dsh web --patch</c>: replaces dsh's native Windows folder chooser with its
+    /// in-app browser. The native chooser is a separate top-level window and can open behind the
+    /// embedded WebView2, leaving "Add workspace" looking stuck until the user clicks.
+    /// </summary>
+    const string BrowseDirectoryPickerPatch = """
+        # Written by DSH NoDeps on every launch. The native Windows folder chooser runs outside the
+        # page and can open behind the launcher; the in-app browser picker cannot.
+        - id: directory-picker
+          disabled: true
+        - insert:
+            - id: directory-picker-browse
+              name: '@deepseek-ai/dsh-host-directory-picker-browse'
+            - id: directory-picker-browse-surface
+              name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
+        """;
+
+    /// <summary>Writes <see cref="BrowseDirectoryPickerPatch"/> under <c>data</c> and returns its path.</summary>
+    public static string WriteDirectoryPickerPatch()
+    {
+        Directory.CreateDirectory(AppPaths.Data);
+        string path = Path.Combine(AppPaths.Data, "directory-picker-browse.yml");
+        File.WriteAllText(path, BrowseDirectoryPickerPatch);
+        return path;
+    }
+
+    /// <summary>
+    /// Whether this dsh still composes the adaptive picker row the browse patch disables. Checked once
+    /// per launch with <c>dsh web --dump-config</c>; if the profile already composes another picker (or
+    /// the dump fails), the launcher leaves the composition alone instead of risking a duplicate service.
+    /// </summary>
+    public static async Task<bool> HasAutoDirectoryPickerAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(20));
+            var psi = new ProcessStartInfo(NodeExe)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            psi.ArgumentList.Add(DshBin);
+            psi.ArgumentList.Add("web");
+            psi.ArgumentList.Add("--dump-config");
+            ApplyEnvironment(psi);
+            using var p = Process.Start(psi)!;
+            var stdout = p.StandardOutput.ReadToEndAsync(timeout.Token);
+            _ = p.StandardError.ReadToEndAsync(timeout.Token);
+            try { await p.WaitForExitAsync(timeout.Token); }
+            catch { try { p.Kill(true); } catch { } throw; }
+            return p.ExitCode == 0 &&
+                   (await stdout).Contains("name: '@deepseek-ai/dsh-host-directory-picker-auto'", StringComparison.Ordinal);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch { return false; }
+    }
+
     public static bool NodeInstalled => File.Exists(NodeExe) && File.Exists(NpmCli);
     public static bool DshInstalled => File.Exists(DshBin);
 
@@ -77,11 +151,27 @@ static class Toolchain
     /// <summary>Compares "0.2.1-rc.2" with "0.2.0-rc.2" (a leading "v" is accepted). No suffix counts as stable, i.e. greater.</summary>
     public static int CompareVersions(string a, string b)
     {
-        static (int[] nums, string pre) Parse(string v)
+        static (int[] nums, string[] pre) Parse(string v)
         {
             var parts = v.TrimStart('v').Split('-', 2);
             var nums = parts[0].Split('.').Select(x => int.TryParse(x, out var n) ? n : 0).ToArray();
-            return (nums, parts.Length > 1 ? parts[1] : "~");
+            var pre = parts.Length > 1 && parts[1].Length > 0 ? parts[1].Split('.') : [];
+            return (nums, pre);
+        }
+        static int ComparePrerelease(string[] a, string[] b)
+        {
+            if (a.Length == 0 || b.Length == 0) return b.Length.CompareTo(a.Length); // stable sorts last
+            for (int i = 0; i < Math.Min(a.Length, b.Length); i++)
+            {
+                bool aNumeric = int.TryParse(a[i], out int x);
+                bool bNumeric = int.TryParse(b[i], out int y);
+                int c = aNumeric && bNumeric ? x.CompareTo(y)
+                    : aNumeric ? -1                                   // numeric identifiers sort before text
+                    : bNumeric ? 1
+                    : string.CompareOrdinal(a[i], b[i]);
+                if (c != 0) return c;
+            }
+            return a.Length.CompareTo(b.Length);
         }
         var (an, ap) = Parse(a);
         var (bn, bp) = Parse(b);
@@ -90,7 +180,7 @@ static class Toolchain
             int x = i < an.Length ? an[i] : 0, y = i < bn.Length ? bn[i] : 0;
             if (x != y) return x.CompareTo(y);
         }
-        return string.CompareOrdinal(ap, bp);
+        return ComparePrerelease(ap, bp);
     }
 
     /// <summary>
@@ -104,7 +194,7 @@ static class Toolchain
             status("Installing DeepSeek Harness…");
             string? first = await TryLatestAsync(ct);
             var (code, output) = await InstallDshAsync(first ?? "next", log, ct);
-            if (code != 0 || !DshInstalled)
+            if (code != 0 || !DshInstalled || InstalledDshVersion() == null)
                 throw new Exception($"Could not install DeepSeek Harness.\n\n{Tail(output)}");
             return;
         }
@@ -117,17 +207,25 @@ static class Toolchain
             if (latest == null || (installed != null && CompareVersions(latest, installed) <= 0)) return;
 
             status($"Updating DeepSeek Harness to {latest}…");
-            await InstallDshAsync(latest, log, ct);
+            var (code, output) = await InstallDshAsync(latest, log, ct);
+            if (code != 0)
+                throw new Exception($"npm install exited with code {code}.\n\n{Tail(output)}");
+            var updated = InstalledDshVersion();
+            if (updated == null || CompareVersions(updated, latest) < 0)
+                throw new Exception($"DeepSeek Harness reports {updated ?? "(unknown)"} after installing {latest}.");
         }
         catch (OperationCanceledException) { throw; }
-        catch { /* keep the current version */ }
+        catch (Exception ex)
+        {
+            log("> dsh update failed, keeping the installed version: " + ex.Message.Split('\n')[0]);
+        }
 
-        // If a half-finished update left it broken, reinstall from scratch.
-        if (!DshInstalled)
+        // If a half-finished update left the package unusable, reinstall from scratch.
+        if (!DshInstalled || InstalledDshVersion() == null)
         {
             status("Repairing DeepSeek Harness…");
             var (code, output) = await InstallDshAsync("next", log, ct);
-            if (code != 0 || !DshInstalled)
+            if (code != 0 || !DshInstalled || InstalledDshVersion() == null)
                 throw new Exception($"DeepSeek Harness was left damaged after updating and could not be repaired.\n\n{Tail(output)}");
         }
     }

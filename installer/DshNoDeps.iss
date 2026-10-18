@@ -66,6 +66,10 @@ Filename: "{app}\{#AppExe}"; Flags: nowait; Check: RelaunchRequested
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+{ The app falls back to %LOCALAPPDATA%\DshLauncher when its own folder is not writable. }
+var
+  DeleteFallbackData: Boolean;
+
 function IsRootPath(const Path: String): Boolean;
 begin
   Result := Length(RemoveBackslashUnlessRoot(Path)) <= 3;
@@ -169,7 +173,7 @@ end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
-  Dir: String;
+  Dir, Marker, InstallPath: String;
 begin
   { Windows itself records the app in these places the first time it runs; remove those traces too. }
   if CurUninstallStep = usPostUninstall then
@@ -178,10 +182,39 @@ begin
                    ExpandConstant('{app}\{#AppExe}'));
     RegDeleteKeyIncludingSubkeys(HKCU,
       'Software\Microsoft\Windows\CurrentVersion\Start\TileProperties\W~' + ExpandConstant('{app}'));
+
+    { Only when the install folder never held runtime/data: otherwise this app used its own
+      folder, and the LocalAppData copy may belong to another installation. }
+    if DeleteFallbackData then
+    begin
+      Dir := ExpandConstant('{%LOCALAPPDATA}') + '\DshLauncher';
+      if (not IsRootPath(Dir)) and
+         (DirExists(AddBackslash(Dir) + 'runtime') or DirExists(AddBackslash(Dir) + 'data')) then
+        DelTree(Dir, True, True, True);
+    end;
   end;
 
   if CurUninstallStep = usUninstall then
   begin
+    { The app writes install-path.ini in the fallback folder. Delete that folder only when the
+      marker names this install and the install folder itself never held runtime/data. }
+    DeleteFallbackData := False;
+    if (not DirExists(ExpandConstant('{app}\runtime'))) and
+       (not DirExists(ExpandConstant('{app}\data'))) then
+    begin
+      Marker := ExpandConstant('{%LOCALAPPDATA}') + '\DshLauncher\install-path.ini';
+      if FileExists(Marker) then
+      begin
+        InstallPath := GetIniString('install', 'path', '', Marker);
+        if InstallPath <> '' then
+        begin
+          InstallPath := RemoveBackslashUnlessRoot(Trim(InstallPath));
+          DeleteFallbackData :=
+            LowerCase(InstallPath) = LowerCase(RemoveBackslashUnlessRoot(ExpandConstant('{app}')));
+        end;
+      end;
+    end;
+
     Dir := DshHomeDir();
     if (not UninstallSilent) and LooksLikeDshHome(Dir) then
     begin

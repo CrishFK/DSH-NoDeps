@@ -47,6 +47,7 @@ choose **No** if you want to keep your chats and settings.
 
 - Windows 10/11 (x64) only. It needs an internet connection for the first run and for updates.
 - It needs Microsoft's WebView2 Runtime, which ships with Windows 11 and Edge. If it is missing, the app offers to install it.
+- **Add workspace** opens DSH's folder browser inside the window, not a separate Windows folder dialog.
 - `dsh` has no stable release yet (everything published is an alpha or release candidate), so the app uses the highest version. It can
   have bugs typical of a pre-release.
 - The window title shows the app version first and then the name of the current chat, for example
@@ -63,7 +64,8 @@ choose **No** if you want to keep your chats and settings.
 | Embedded browser profile and window placement | `data\` inside the install folder |
 | Harness configuration, sessions and API key | `%USERPROFILE%\.dsh` or the `DSH_HOME` folder (managed by `dsh`; not deleted unless you say so on uninstall) |
 
-If the `.exe` runs from a folder it cannot write to, those two folders fall back to `%LOCALAPPDATA%\DshLauncher`.
+If the `.exe` runs from a folder it cannot write to, those two folders fall back to `%LOCALAPPDATA%\DshLauncher`. The uninstaller
+removes that fallback folder only when the marker written by this installation names it.
 
 </details>
 
@@ -81,7 +83,7 @@ dotnet publish -c Release -o bin
 .\installer\build.ps1 -Iscc "C:\path\to\ISCC.exe"
 ```
 
-The installer is written to `installer\Output\DSH-NoDeps-Setup.exe` (about 58 MB). When running from `bin`, `runtime` and `data` are
+The installer is written to `installer\Output\DSH-NoDeps-Setup.exe` (about 57.6 MB). When running from `bin`, `runtime` and `data` are
 created inside `bin`, so deleting `bin` to rebuild also deletes the downloaded dependencies (~800 MB).
 
 **Releases:** pushing a tag like `v1.2.0` builds the installer on GitHub and publishes it as a release, with its SHA-256 checksum. A

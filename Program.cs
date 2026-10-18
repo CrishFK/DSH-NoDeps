@@ -19,13 +19,47 @@ static class Program
         instance = new Mutex(true, "DshLauncher.SingleInstance", out bool first);
         if (!first)
         {
-            MessageBox.Show("DSH NoDeps is already running.", "DSH NoDeps");
+            if (!ActivateExistingInstance())
+                MessageBox.Show("DSH NoDeps is already running.", "DSH NoDeps");
             return;
         }
         ApplicationConfiguration.Initialize();
+        AppPaths.WriteInstallMarker();
         Application.Run(new MainForm());
         ReleaseSingleInstance();
     }
+
+    /// <summary>Brings the already running instance to the front; false if it has no window yet.</summary>
+    static bool ActivateExistingInstance()
+    {
+        try
+        {
+            using var current = Process.GetCurrentProcess();
+            foreach (var p in Process.GetProcessesByName(current.ProcessName))
+            {
+                using (p)
+                {
+                    if (p.Id == current.Id) continue;
+                    p.Refresh();
+                    IntPtr h = p.MainWindowHandle;
+                    if (h == IntPtr.Zero) continue;
+                    ShowWindow(h, SW_RESTORE);
+                    SetForegroundWindow(h);
+                    return true;
+                }
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    const int SW_RESTORE = 9;
+
+    [DllImport("user32.dll")]
+    static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    static extern bool SetForegroundWindow(IntPtr hWnd);
 
     /// <summary>
     /// Lets the installer start while this process is still shutting down: its AppMutex check would otherwise find the
@@ -344,6 +378,27 @@ sealed class MainForm : Form
         };
         psi.ArgumentList.Add(Toolchain.DshBin);
         psi.ArgumentList.Add("web");
+        // dsh's native Windows folder chooser is a separate top-level window and can open behind
+        // WebView2; the in-app picker keeps "Add workspace" inside the page. Only patch the profile
+        // when it still composes the adaptive picker, so a future dsh cannot end up with two.
+        try
+        {
+            if (!Toolchain.BrowseDirectoryPickerInstalled)
+            {
+                Log("> the in-app directory picker packages are missing; keeping DSH's default");
+            }
+            else if (await Toolchain.HasAutoDirectoryPickerAsync(cts.Token))
+            {
+                psi.ArgumentList.Add("--patch");
+                psi.ArgumentList.Add(Toolchain.WriteDirectoryPickerPatch());
+                Log("> using the in-app directory picker");
+            }
+        }
+        catch (OperationCanceledException) when (closing) { throw; }
+        catch (Exception ex)
+        {
+            Log("> could not prepare the in-app directory picker, keeping DSH's default: " + ex.Message);
+        }
         psi.ArgumentList.Add("--no-open");
         psi.ArgumentList.Add("--port");
         psi.ArgumentList.Add(port.ToString());
@@ -355,13 +410,18 @@ sealed class MainForm : Form
         var urlTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var log = new System.Text.StringBuilder();
         var rx = new Regex(@"https?://\S+");
+        int urlSeen = 0;
         DataReceivedEventHandler handler = (_, e) =>
         {
             if (e.Data == null) return;
             lock (log) log.AppendLine(e.Data);
             Log(Regex.Replace(e.Data, @"token=[\w-]+", "token=…")); // the token is never shown
             var m = rx.Match(e.Data);
-            if (m.Success && e.Data.Contains("dsh web")) urlTcs.TrySetResult(m.Value);
+            if (m.Success && e.Data.Contains("dsh web"))
+            {
+                Interlocked.Exchange(ref urlSeen, 1);
+                urlTcs.TrySetResult(m.Value);
+            }
         };
         dsh.OutputDataReceived += handler;
         dsh.ErrorDataReceived += handler;
@@ -371,7 +431,9 @@ sealed class MainForm : Form
         dsh.Exited += (_, _) =>
         {
             urlTcs.TrySetException(new Exception("dsh exited while starting.\n\n" + Toolchain.Tail(log.ToString())));
-            if (!closing) BeginInvoke(() =>
+            // Before the URL is printed RunAsync already reports the startup failure; only warn once
+            // the server has actually been running.
+            if (!closing && Volatile.Read(ref urlSeen) == 1) BeginInvoke(() =>
             {
                 MessageBox.Show("The DeepSeek Harness server has stopped.", "DSH NoDeps",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);

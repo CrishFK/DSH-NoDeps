@@ -15,8 +15,10 @@ static class Credentials
 {
     const string BalanceUrl = "https://api.deepseek.com/user/balance";
 
-    static readonly Regex KeyLine = new(@"^(\s+)DEEPSEEK_API_KEY\s*:\s*(.*?)\s*$");
+    static readonly Regex KeyLine = new(@"^(\s*)DEEPSEEK_API_KEY\s*:\s*(.*?)\s*$");
     static readonly Regex RefsLine = new(@"^refs\s*:\s*(\{\s*\})?\s*$");
+    // The only inline form we can read or rewrite without losing other refs: refs: { DEEPSEEK_API_KEY: ... }
+    static readonly Regex InlineRefsKey = new(@"^refs\s*:\s*\{\s*DEEPSEEK_API_KEY\s*:\s*([^,{}]*?)\s*\}\s*$");
     static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(8) };
 
     public static string DshHome
@@ -41,8 +43,14 @@ static class Credentials
             foreach (var line in File.ReadAllLines(FilePath))
             {
                 var m = KeyLine.Match(line);
-                if (!m.Success) continue;
-                var v = m.Groups[2].Value.Trim().Trim('"', '\'');
+                string? value = m.Success ? m.Groups[2].Value : null;
+                if (value == null)
+                {
+                    var inline = InlineRefsKey.Match(line);
+                    if (inline.Success) value = inline.Groups[1].Value;
+                }
+                if (value == null) continue;
+                var v = value.Trim().Trim('"', '\'');
                 return v.Length == 0 ? null : v;
             }
         }
@@ -93,10 +101,16 @@ static class Credentials
         else
         {
             int refs = lines.FindIndex(l => RefsLine.IsMatch(l));
+            int inlineRefs = refs >= 0 ? -1 : lines.FindIndex(l => InlineRefsKey.IsMatch(l));
             if (refs >= 0)
             {
                 lines[refs] = "refs:";
                 lines.Insert(refs + 1, "  " + entry);
+            }
+            else if (inlineRefs >= 0)
+            {
+                lines[inlineRefs] = "refs:";
+                lines.Insert(inlineRefs + 1, "  " + entry);
             }
             else if (lines.Any(l => Regex.IsMatch(l, @"^refs\s*:")))
             {

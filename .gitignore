@@ -1,0 +1,31 @@
+# Build output
+bin/
+obj/
+publish/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userprefs
+
+# Packages and artifacts
+*.nupkg
+*.snupkg
+*.log
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Local
+*.local
+
+# Developer notes, kept local on purpose (not published)
+AGENTS.md
+
+# Installer build output
+installer/payload/
+installer/Output/

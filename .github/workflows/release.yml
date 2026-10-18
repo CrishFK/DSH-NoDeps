@@ -1,0 +1,98 @@
+name: Release
+
+# Builds the Windows installer and publishes it as a GitHub release when a version tag is pushed:
+#   git tag v1.2.0 && git push origin v1.2.0
+# Tags like v1.2.0-rc.1 are published as pre-releases.
+# "Run workflow" (manual) only builds the installer and keeps it as a downloadable artifact; nothing is released.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write # needed to create the release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Work out the version
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $tag = $env:GITHUB_REF_NAME
+            if ($tag -notmatch '^v(\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?)$') {
+              throw "Tag '$tag' must look like v1.2.3 or v1.2.3-rc.1"
+            }
+            $version = $Matches[1]
+          } else {
+            $version = '0.0.0-dev'
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "Version: $version"
+
+      # Inno Setup is only a build tool. Use the official release and check its signature before running it.
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe' -OutFile $exe
+          $sig = Get-AuthenticodeSignature $exe
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Pyrsys B\.V\.') {
+            throw "Unexpected Inno Setup signature: $($sig.Status) $($sig.SignerCertificate.Subject)"
+          }
+          $dir = Join-Path $env:RUNNER_TEMP 'InnoSetup'
+          Start-Process $exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', '/NOICONS', "/DIR=$dir" -Wait
+          if (-not (Test-Path (Join-Path $dir 'ISCC.exe'))) { throw 'Inno Setup did not install' }
+          "ISCC=$(Join-Path $dir 'ISCC.exe')" >> $env:GITHUB_ENV
+
+      - name: Build the installer
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: ./installer/build.ps1 -Iscc $env:ISCC -Version $env:VERSION
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $file = 'installer/Output/DSH-NoDeps-Setup.exe'
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+          "$hash  DSH-NoDeps-Setup.exe" | Out-File "$file.sha256" -Encoding ascii
+          Get-Content "$file.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DSH-NoDeps-Setup
+          path: |
+            installer/Output/DSH-NoDeps-Setup.exe
+            installer/Output/DSH-NoDeps-Setup.exe.sha256
+          if-no-files-found: error
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          $args = @(
+            $env:GITHUB_REF_NAME,
+            'installer/Output/DSH-NoDeps-Setup.exe',
+            'installer/Output/DSH-NoDeps-Setup.exe.sha256',
+            '--repo', $env:GITHUB_REPOSITORY,
+            '--title', "DSH NoDeps $env:VERSION",
+            '--notes', 'Unofficial launcher for the official DeepSeek Harness. Not affiliated with DeepSeek. See DISCLAIMER.md.',
+            '--generate-notes'
+          )
+          if ($env:VERSION -match '-') { $args += '--prerelease' }
+          gh release create @args

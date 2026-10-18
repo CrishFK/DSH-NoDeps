@@ -28,82 +28,56 @@ static class Toolchain
     static string DshPackageDir => Path.Combine(DshPrefix, "node_modules", "@deepseek-ai", "dsh");
     public static string DshBin => Path.Combine(DshPackageDir, "lib", "bin.js");
 
-    /// <summary>
-    /// Whether the two packages the browse-picker patch inserts are installed. The patch cannot work
-    /// without them, and checking here keeps a future slimmed-down dsh from failing to start.
-    /// </summary>
-    public static bool BrowseDirectoryPickerInstalled =>
-        File.Exists(Path.Combine(DshPrefix, "node_modules", "@deepseek-ai",
-            "dsh-host-directory-picker-browse", "package.json")) &&
-        File.Exists(Path.Combine(DshPrefix, "node_modules", "@deepseek-ai",
-            "dsh-host-directory-picker-browse", "lib", "index.js")) &&
-        File.Exists(Path.Combine(DshPrefix, "node_modules", "@deepseek-ai",
-            "dsh-client-ui-directory-picker-browse", "package.json")) &&
-        File.Exists(Path.Combine(DshPrefix, "node_modules", "@deepseek-ai",
-            "dsh-client-ui-directory-picker-browse", "lib", "client.js"));
+    public static bool NodeInstalled => File.Exists(NodeExe) && File.Exists(NpmCli);
+    public static bool DshInstalled => File.Exists(DshBin);
 
     /// <summary>
-    /// Patch passed to <c>dsh web --patch</c>: replaces dsh's native Windows folder chooser with its
-    /// in-app browser. The native chooser is a separate top-level window and can open behind the
-    /// embedded WebView2, leaving "Add workspace" looking stuck until the user clicks.
+    /// dsh's native folder dialog calls <c>IFileOpenDialog::Show</c> with a null owner. A dialog
+    /// without an owner is not modal to the launcher, so WebView2 never learns that it closed and
+    /// can stay stuck until a click. Pass the foreground window (the launcher) as the owner, the
+    /// same way Chromium's own file picker is owned. dsh updates replace this file, so the patch
+    /// is re-applied on every start.
     /// </summary>
-    const string BrowseDirectoryPickerPatch = """
-        # Written by DSH NoDeps on every launch. The native Windows folder chooser runs outside the
-        # page and can open behind the launcher; the in-app browser picker cannot.
-        - id: directory-picker
-          disabled: true
-        - insert:
-            - id: directory-picker-browse
-              name: '@deepseek-ai/dsh-host-directory-picker-browse'
-            - id: directory-picker-browse-surface
-              name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
-        """;
-
-    /// <summary>Writes <see cref="BrowseDirectoryPickerPatch"/> under <c>data</c> and returns its path.</summary>
-    public static string WriteDirectoryPickerPatch()
-    {
-        Directory.CreateDirectory(AppPaths.Data);
-        string path = Path.Combine(AppPaths.Data, "directory-picker-browse.yml");
-        File.WriteAllText(path, BrowseDirectoryPickerPatch);
-        return path;
-    }
-
-    /// <summary>
-    /// Whether this dsh still composes the adaptive picker row the browse patch disables. Checked once
-    /// per launch with <c>dsh web --dump-config</c>; if the profile already composes another picker (or
-    /// the dump fails), the launcher leaves the composition alone instead of risking a duplicate service.
-    /// </summary>
-    public static async Task<bool> HasAutoDirectoryPickerAsync(CancellationToken ct)
+    public static string PatchNativePickerOwner()
     {
         try
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(20));
-            var psi = new ProcessStartInfo(NodeExe)
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            psi.ArgumentList.Add(DshBin);
-            psi.ArgumentList.Add("web");
-            psi.ArgumentList.Add("--dump-config");
-            ApplyEnvironment(psi);
-            using var p = Process.Start(psi)!;
-            var stdout = p.StandardOutput.ReadToEndAsync(timeout.Token);
-            _ = p.StandardError.ReadToEndAsync(timeout.Token);
-            try { await p.WaitForExitAsync(timeout.Token); }
-            catch { try { p.Kill(true); } catch { } throw; }
-            return p.ExitCode == 0 &&
-                   (await stdout).Contains("name: '@deepseek-ai/dsh-host-directory-picker-auto'", StringComparison.Ordinal);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch { return false; }
-    }
+            string path = Path.Combine(Root, "dsh", "node_modules", "@deepseek-ai",
+                "dsh-host-directory-picker-native", "lib", "worker.cjs");
+            if (!File.Exists(path)) return "worker.cjs not found";
+            string text = File.ReadAllText(path);
+            if (text.Contains("getForegroundWindow: () => getForegroundWindow()"))
+                return "already patched";
 
-    public static bool NodeInstalled => File.Exists(NodeExe) && File.Exists(NpmCli);
-    public static bool DshInstalled => File.Exists(DshBin);
+            string updated = text.Replace(
+                "const getCurrentThreadId = kernel32.func(\"__stdcall\", \"GetCurrentThreadId\", \"uint32\", []);",
+                "const getCurrentThreadId = kernel32.func(\"__stdcall\", \"GetCurrentThreadId\", \"uint32\", []);\n" +
+                "\tconst getForegroundWindow = user32.func(\"__stdcall\", \"GetForegroundWindow\", \"void *\", []);");
+            updated = updated.Replace(
+                "currentThreadId: () => getCurrentThreadId(),",
+                "currentThreadId: () => getCurrentThreadId(),\n\t\tgetForegroundWindow: () => getForegroundWindow(),");
+            updated = updated.Replace(
+                "show: () => method(dialog, SLOT_SHOW, protoShow)(null),",
+                "show: (owner) => method(dialog, SLOT_SHOW, protoShow)(owner ?? null),");
+            updated = Regex.Replace(updated,
+                @"bindings\.pressAltForForeground\(\);\s*const shown = dialog\.show\(\);",
+                "const owner = bindings.getForegroundWindow();\n" +
+                "\t\t\tbindings.pressAltForForeground();\n" +
+                "\t\t\tconst shown = dialog.show(owner);");
+
+            if (!updated.Contains("const getForegroundWindow = user32.func") ||
+                !updated.Contains("getForegroundWindow: () => getForegroundWindow()") ||
+                !updated.Contains("show: (owner) => method(dialog, SLOT_SHOW, protoShow)(owner ?? null)") ||
+                !updated.Contains("dialog.show(owner)"))
+                return "pattern mismatch";
+
+            string backup = path + ".dsh-no-deps.bak";
+            if (!File.Exists(backup)) File.Copy(path, backup);
+            File.WriteAllText(path, updated);
+            return "patched";
+        }
+        catch (Exception ex) { return "failed: " + ex.Message; }
+    }
 
     /// <summary>Prepends node.exe to the PATH of a child process so dsh and npm scripts can find it.</summary>
     public static void ApplyEnvironment(ProcessStartInfo psi)

@@ -47,7 +47,7 @@ choose **No** if you want to keep your chats and settings.
 
 - Windows 10/11 (x64) only. It needs an internet connection for the first run and for updates.
 - It needs Microsoft's WebView2 Runtime, which ships with Windows 11 and Edge. If it is missing, the app offers to install it.
-- **Add workspace** opens DSH's folder browser inside the window, not a separate Windows folder dialog.
+- **Add workspace** opens the standard Windows folder dialog, so you can change drive, browse network locations and use the usual shortcuts.
 - `dsh` has no stable release yet (everything published is an alpha or release candidate), so the app uses the highest version. It can
   have bugs typical of a pre-release.
 - The window title shows the app version first and then the name of the current chat, for example

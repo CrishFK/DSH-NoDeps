@@ -378,31 +378,11 @@ sealed class MainForm : Form
         };
         psi.ArgumentList.Add(Toolchain.DshBin);
         psi.ArgumentList.Add("web");
-        // dsh's native Windows folder chooser is a separate top-level window and can open behind
-        // WebView2; the in-app picker keeps "Add workspace" inside the page. Only patch the profile
-        // when it still composes the adaptive picker, so a future dsh cannot end up with two.
-        try
-        {
-            if (!Toolchain.BrowseDirectoryPickerInstalled)
-            {
-                Log("> the in-app directory picker packages are missing; keeping DSH's default");
-            }
-            else if (await Toolchain.HasAutoDirectoryPickerAsync(cts.Token))
-            {
-                psi.ArgumentList.Add("--patch");
-                psi.ArgumentList.Add(Toolchain.WriteDirectoryPickerPatch());
-                Log("> using the in-app directory picker");
-            }
-        }
-        catch (OperationCanceledException) when (closing) { throw; }
-        catch (Exception ex)
-        {
-            Log("> could not prepare the in-app directory picker, keeping DSH's default: " + ex.Message);
-        }
         psi.ArgumentList.Add("--no-open");
         psi.ArgumentList.Add("--port");
         psi.ArgumentList.Add(port.ToString());
         Toolchain.ApplyEnvironment(psi);
+        Log("> native picker owner: " + Toolchain.PatchNativePickerOwner());
 
         dsh = Process.Start(psi)!;
         AssignToKillOnCloseJob(dsh);

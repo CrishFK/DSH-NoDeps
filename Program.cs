@@ -150,7 +150,8 @@ sealed class MainForm : Form
     {
         if (closing) return;
         if (InvokeRequired) { try { BeginInvoke(() => Log(line)); } catch { } return; }
-        if (!logBox.Visible) logBox.Visible = true;
+        // dsh keeps logging after the UI is up (e.g. the model listing); that must not cover the web view again.
+        if (!logBox.Visible && !web.Visible) logBox.Visible = true;
         logBox.AppendText(line + Environment.NewLine);
         if (logBox.TextLength > MaxLogChars)
             logBox.Text = logBox.Text[^(MaxLogChars / 2)..];

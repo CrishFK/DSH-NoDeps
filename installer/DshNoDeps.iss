@@ -36,6 +36,9 @@ UninstallDisplayName={#AppName}
 InfoBeforeFile=..\DISCLAIMER.md
 Compression=lzma2/max
 SolidCompression=yes
+; Electron is ~250 MB: compress in parallel blocks on all the build machine's cores instead of one thread.
+LZMAUseSeparateProcess=yes
+LZMANumBlockThreads=4
 WizardStyle=modern
 ; Lets a silent update close the running app if it still holds files; the app starts again via /relaunch=1 (see [Run]).
 CloseApplications=yes

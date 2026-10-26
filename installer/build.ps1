@@ -1,6 +1,6 @@
-# Builds the installer: publishes the app to installer\payload and compiles installer\DshNoDeps.iss.
+# Builds the Windows installer: packages the Electron app into installer\payload and compiles installer\DshNoDeps.iss.
 # Usage:  .\installer\build.ps1 -Iscc "C:\path\to\ISCC.exe" [-Version 1.2.3]
-# Inno Setup 6 is only a build tool; it is not needed to run the app or the installer.
+# Needs Node.js (npm) on the PATH. Inno Setup 6 is only a build tool; it is not needed to run the app or the installer.
 param(
     [Parameter(Mandatory = $true)][string]$Iscc,
     [string]$Version
@@ -16,15 +16,23 @@ if ($Version -and $Version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') {
 
 if (Test-Path $payload) { Remove-Item -Recurse -Force $payload }
 
-$publishArgs = @((Join-Path $root 'DshLauncher.csproj'), '-c', 'Release', '-o', $payload)
+$builderArgs = @('electron-builder', '--win', '--x64', '--dir', '--publish', 'never')
 $isccArgs = @()
 if ($Version) {
-    $publishArgs += "-p:Version=$Version"
+    $builderArgs += "-c.extraMetadata.version=$Version"
     $isccArgs += "/DAppVersion=$Version"
 }
 
-dotnet publish @publishArgs
-if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed' }
+Push-Location $root
+try {
+    npm ci
+    if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
+    npx @builderArgs
+    if ($LASTEXITCODE -ne 0) { throw 'electron-builder failed' }
+}
+finally { Pop-Location }
+
+Copy-Item -Recurse (Join-Path $root 'dist\win-unpacked') $payload
 
 & $Iscc @isccArgs (Join-Path $PSScriptRoot 'DshNoDeps.iss')
 if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }

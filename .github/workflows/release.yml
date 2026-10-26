@@ -1,9 +1,10 @@
 name: Release
 
-# Builds the Windows installer and publishes it as a GitHub release when a version tag is pushed:
-#   git tag v1.2.0 && git push origin v1.2.0
-# Tags like v1.2.0-rc.1 are published as pre-releases.
-# "Run workflow" (manual) only builds the installer and keeps it as a downloadable artifact; nothing is released.
+# Builds the Windows installer and the Linux AppImage and publishes them as a GitHub release when a version tag is
+# pushed:
+#   git tag v2.0.0 && git push origin v2.0.0
+# Tags like v2.0.0-rc.1 are published as pre-releases.
+# "Run workflow" (manual) only builds both and keeps them as downloadable artifacts; nothing is released.
 on:
   push:
     tags:
@@ -14,35 +15,57 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Work out the version
+        id: ver
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?)$ ]]; then
+              echo "Tag '$GITHUB_REF_NAME' must look like v1.2.3 or v1.2.3-rc.1" >&2
+              exit 1
+            fi
+            version="${BASH_REMATCH[1]}"
+          else
+            version=0.0.0-dev
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Version: $version"
+
+  windows:
+    needs: version
     runs-on: windows-latest
-    permissions:
-      contents: write # needed to create the release
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-node@v4
         with:
-          dotnet-version: 8.0.x
+          node-version: 24
+          cache: npm
 
-      - name: Work out the version
-        id: ver
-        shell: pwsh
-        run: |
-          if ($env:GITHUB_REF_TYPE -eq 'tag') {
-            $tag = $env:GITHUB_REF_NAME
-            if ($tag -notmatch '^v(\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?)$') {
-              throw "Tag '$tag' must look like v1.2.3 or v1.2.3-rc.1"
-            }
-            $version = $Matches[1]
-          } else {
-            $version = '0.0.0-dev'
-          }
-          "version=$version" >> $env:GITHUB_OUTPUT
-          "Version: $version"
+      # Electron and the packaging tools are downloaded once and reused until package-lock.json changes.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: electron-windows-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-windows-
 
-      # Inno Setup is only a build tool. Use the official release and check its signature before running it.
+      # Inno Setup is only a build tool, kept in the cache once installed.
+      - uses: actions/cache@v4
+        id: inno
+        with:
+          path: ${{ runner.temp }}\InnoSetup
+          key: innosetup-6.7.3
+
+      # Use the official release and check its signature before running it.
       - name: Install Inno Setup
+        if: steps.inno.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $exe = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
@@ -54,12 +77,18 @@ jobs:
           $dir = Join-Path $env:RUNNER_TEMP 'InnoSetup'
           Start-Process $exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', '/NOICONS', "/DIR=$dir" -Wait
           if (-not (Test-Path (Join-Path $dir 'ISCC.exe'))) { throw 'Inno Setup did not install' }
-          "ISCC=$(Join-Path $dir 'ISCC.exe')" >> $env:GITHUB_ENV
+
+      - name: Locate Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = Join-Path $env:RUNNER_TEMP 'InnoSetup\ISCC.exe'
+          if (-not (Test-Path $iscc)) { throw 'ISCC.exe not found' }
+          "ISCC=$iscc" >> $env:GITHUB_ENV
 
       - name: Build the installer
         shell: pwsh
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: ./installer/build.ps1 -Iscc $env:ISCC -Version $env:VERSION
 
       - name: Checksum
@@ -72,27 +101,78 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: DSH-NoDeps-Setup
+          name: windows
           path: |
             installer/Output/DSH-NoDeps-Setup.exe
             installer/Output/DSH-NoDeps-Setup.exe.sha256
           if-no-files-found: error
 
+  linux:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # Electron and the packaging tools are downloaded once and reused until package-lock.json changes.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: electron-linux-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-linux-
+
+      - name: Build the AppImage
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          npm ci
+          npx electron-builder --linux AppImage --x64 --publish never "-c.extraMetadata.version=$VERSION"
+
+      - name: Checksum
+        working-directory: dist
+        run: |
+          sha256sum DSH-NoDeps-x86_64.AppImage > DSH-NoDeps-x86_64.AppImage.sha256
+          cat DSH-NoDeps-x86_64.AppImage.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            dist/DSH-NoDeps-x86_64.AppImage
+            dist/DSH-NoDeps-x86_64.AppImage.sha256
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [version, windows, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # needed to create the release
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
       - name: Publish the release
-        if: github.ref_type == 'tag'
-        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          $args = @(
-            $env:GITHUB_REF_NAME,
-            'installer/Output/DSH-NoDeps-Setup.exe',
-            'installer/Output/DSH-NoDeps-Setup.exe.sha256',
-            '--repo', $env:GITHUB_REPOSITORY,
-            '--title', "DSH NoDeps $env:VERSION",
-            '--notes', 'Unofficial launcher for the official DeepSeek Harness. Not affiliated with DeepSeek. See DISCLAIMER.md.',
-            '--generate-notes'
+          args=(
+            "$GITHUB_REF_NAME"
+            out/DSH-NoDeps-Setup.exe out/DSH-NoDeps-Setup.exe.sha256
+            out/DSH-NoDeps-x86_64.AppImage out/DSH-NoDeps-x86_64.AppImage.sha256
+            --repo "$GITHUB_REPOSITORY"
+            --title "DSH NoDeps $VERSION"
+            --notes 'Unofficial launcher for the official DeepSeek Harness. Not affiliated with DeepSeek. See DISCLAIMER.md.'
+            --generate-notes
           )
-          if ($env:VERSION -match '-') { $args += '--prerelease' }
-          gh release create @args
+          if [[ "$VERSION" == *-* ]]; then args+=(--prerelease); fi
+          gh release create "${args[@]}"

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>DSH NoDeps — API key</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body>
+  <!-- Asks for a new API key when the stored one is no longer valid. -->
+  <form class="dialog" id="form">
+    <p>The stored API key has expired or been revoked: DeepSeek rejects it.</p>
+    <p>Create a new one at platform.deepseek.com and paste it here.</p>
+    <p><a href="#" id="link">Open https://platform.deepseek.com/api_keys</a></p>
+    <input type="password" id="key" autocomplete="off" spellcheck="false" autofocus>
+    <label><input type="checkbox" id="show"> Show the key</label>
+    <div class="error" id="error"></div>
+    <div class="buttons">
+      <button type="button" id="skip">Continue without changing</button>
+      <button type="submit" class="primary" id="save">Save and continue</button>
+    </div>
+  </form>
+  <script src="apikey.js"></script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>DSH NoDeps</title>
+  <link rel="stylesheet" href="ui.css">
+  <style>
+    body { display: flex; flex-direction: column; }
+    #status { flex: none; height: 56px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+    /* Live output of what the app is doing (downloads, npm…), like a terminal. */
+    #log {
+      flex: 1;
+      margin: 0;
+      padding: 8px 10px;
+      overflow: auto;
+      white-space: pre;
+      background: var(--log-bg);
+      color: var(--log-fg);
+      font: 12.5px/1.4 ui-monospace, Consolas, "DejaVu Sans Mono", monospace;
+    }
+    #log[hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <div id="status">Starting…</div>
+  <pre id="log" hidden></pre>
+  <script src="launcher.js"></script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 ; Inno Setup script for DSH NoDeps.
-; Build with installer\build.ps1 (publishes the app to installer\payload, then runs ISCC).
+; Build with installer\build.ps1 (packages the Electron app into installer\payload, then runs ISCC).
 ;
 ; Design goals
 ;  - Everything lives in one folder ({app}, default C:\DSH NoDeps): the app, the portable Node.js and dsh
@@ -37,7 +37,6 @@ InfoBeforeFile=..\DISCLAIMER.md
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-AppMutex=DshLauncher.SingleInstance
 ; Lets a silent update close the running app if it still holds files; the app starts again via /relaunch=1 (see [Run]).
 CloseApplications=yes
 RestartApplications=no
@@ -46,7 +45,11 @@ RestartApplications=no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "payload\*"; DestDir: "{app}"; Excludes: "*.pdb,*.xml,runtimes"; Flags: ignoreversion recursesubdirs
+Source: "payload\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
+
+[InstallDelete]
+; The WebView2 builds (1.0.x) kept their browser profile here; the Electron builds cannot use it.
+Type: filesandordirs; Name: "{app}\data\WebView2"
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"

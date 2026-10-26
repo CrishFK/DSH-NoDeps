@@ -4,7 +4,7 @@ DSH NoDeps is an unofficial, independent launcher. It is NOT affiliated with, en
 
 WHAT IT IS
 
-- A small Windows program that starts the official DeepSeek Harness command-line tool (the npm package "@deepseek-ai/dsh") in the
+- A small Windows and Linux program that starts the official DeepSeek Harness command-line tool (the npm package "@deepseek-ai/dsh") in the
   background and shows its web interface in its own window, so you do not have to keep a terminal open.
 - It is not DeepSeek's app and it is not published under DeepSeek's name. It does not contain, modify or redistribute DeepSeek
   Harness. The first time you run it, it downloads the official packages onto your own computer: Node.js from nodejs.org and
@@ -30,7 +30,7 @@ NETWORK ACCESS
 
 The launcher itself does not collect personal data. It contacts only: nodejs.org and registry.npmjs.org (to download and update
 Node.js and DeepSeek Harness), api.deepseek.com (only to check your API key), github.com (only to see whether a newer version of this
-launcher has been released, and to download it if you accept the update) and Microsoft (only to install WebView2, if it is missing and you agree). DeepSeek Harness and
+launcher has been released, and to download it if you accept the update). DeepSeek Harness and
 DeepSeek's services have their own data practices.
 
 NO WARRANTY

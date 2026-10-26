@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>DSH NoDeps — update</title>
+  <link rel="stylesheet" href="ui.css">
+  <style>
+    progress { width: 100%; height: 18px; }
+  </style>
+</head>
+<body>
+  <!-- The "downloading the new version" window: a progress bar and a Cancel button. -->
+  <div class="dialog">
+    <p id="label">Downloading…</p>
+    <progress id="bar"></progress>
+    <div class="buttons">
+      <button type="button" id="cancel">Cancel</button>
+    </div>
+  </div>
+  <script src="update.js"></script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+{
+  "name": "dsh-nodeps",
+  "productName": "DSH NoDeps",
+  "version": "1.0.0",
+  "description": "Self-contained launcher for DeepSeek Harness (unofficial)",
+  "author": "CrishFK",
+  "private": true,
+  "main": "src/main.js",
+  "desktopName": "DshLauncher.desktop",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win --x64 --publish never",
+    "dist:linux": "electron-builder --linux --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.9.3",
+    "electron-builder": "26.17.0"
+  },
+  "build": {
+    "appId": "io.github.crishfk.dsh-nodeps",
+    "productName": "DSH NoDeps",
+    "executableName": "DshLauncher",
+    "copyright": "CrishFK",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "src/watchdog.js"
+    ],
+    "electronLanguages": [
+      "en-US"
+    ],
+    "win": {
+      "target": "dir",
+      "icon": "app.ico"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "build/icon.png",
+      "category": "Development",
+      "synopsis": "Self-contained launcher for DeepSeek Harness (unofficial)",
+      "artifactName": "DSH-NoDeps-${arch}.AppImage"
+    }
+  },
+  "allowScripts": {
+    "electron-winstaller": false
+  }
+}

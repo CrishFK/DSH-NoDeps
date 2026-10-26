@@ -19,7 +19,7 @@ install first.
   without asking, and it says nothing if you are offline.
 - **Everything in one folder.** Nothing in the PATH, nothing in environment variables, nothing left scattered around your system. The
   app, Node.js, `dsh`, the npm cache and the browser profile all live in one folder (on Windows the one you choose, default
-  `C:\DSH NoDeps`; on Linux `~/.local/share/dsh-nodeps`).
+  `C:\DSH NoDeps`; on Linux the `DSH NoDeps` folder you unpack).
 - **Clean uninstall.** It deletes that folder, the shortcuts, the uninstall entry and the traces Windows itself records for the
   program in the registry. It then asks separately whether you also want to delete your DeepSeek data (chats, settings, API key).
   The default is **No**.
@@ -45,19 +45,21 @@ Later launches only download what changed.
 
 ### Linux
 
-1. Download `DSH-NoDeps-x86_64.AppImage` from the [Releases](../../releases) page and put it wherever you like (for example `~/Applications`).
-2. Make it executable (`chmod +x DSH-NoDeps-x86_64.AppImage`, or *Properties > Allow executing* in your file manager) and open it.
+1. Download `DSH-NoDeps-linux-x64.tar.gz` from the [Releases](../../releases) page.
+2. Unpack it wherever you like, for example in `~/Applications` (`tar -xzf DSH-NoDeps-linux-x64.tar.gz -C ~/Applications`, or
+   *Extract here* in your file manager). You get a `DSH NoDeps` folder.
+3. Open `dsh-nodeps` inside that folder. From then on it is also in your application menu as **DSH NoDeps**.
 
-The first run takes a few minutes too, for the same reason. When the app updates itself it replaces the AppImage file in place, so
-keep it in a folder you can write to.
+Nothing else is needed: no FUSE, no packages, no root. The first run takes a few minutes too, for the same reason. Keep the folder
+somewhere you can write to: Node.js, `dsh` and the app's updates are stored inside it.
 
 ## Uninstall
 
 **Windows:** *Apps > Installed apps*, or run `unins000.exe` from the install folder. When it asks whether to delete your DeepSeek
 data, choose **No** if you want to keep your chats and settings.
 
-**Linux:** delete the AppImage and the `~/.local/share/dsh-nodeps` folder. Your DeepSeek data (chats, settings, API key) is in
-`~/.dsh`; delete it too only if you do not want to keep it.
+**Linux:** delete the `DSH NoDeps` folder and the menu entry `~/.local/share/applications/DshLauncher.desktop`. Your DeepSeek data
+(chats, settings, API key) is in `~/.dsh`; delete it too only if you do not want to keep it.
 
 ## Good to know
 
@@ -78,14 +80,14 @@ data, choose **No** if you want to keep your chats and settings.
 
 | What | Windows | Linux |
 |---|---|---|
-| The app | The install folder | The AppImage file |
-| Node.js, `dsh` and the npm cache | `runtime\` inside the install folder | `~/.local/share/dsh-nodeps/runtime` |
-| Embedded browser profile and window placement | `data\` inside the install folder | `~/.local/share/dsh-nodeps/data` |
+| The app | The install folder | `app/` inside the `DSH NoDeps` folder |
+| Node.js, `dsh` and the npm cache | `runtime\` inside the install folder | `runtime/` inside the `DSH NoDeps` folder |
+| Embedded browser profile and window placement | `data\` inside the install folder | `data/` inside the `DSH NoDeps` folder |
 | Harness configuration, sessions and API key | `%USERPROFILE%\.dsh` or `DSH_HOME` | `~/.dsh` or `DSH_HOME` |
 
 The Harness folder is managed by `dsh` and is not deleted unless you say so on uninstall. On Windows, if the `.exe` runs from a
 folder it cannot write to, `runtime` and `data` fall back to `%LOCALAPPDATA%\DshLauncher`; the uninstaller removes that fallback
-folder only when the marker written by this installation names it. On Linux, `XDG_DATA_HOME` is honoured instead of `~/.local/share`.
+folder only when the marker written by this installation names it. On Linux the fallback is `~/.local/share/dsh-nodeps`.
 
 </details>
 
@@ -98,7 +100,7 @@ Node.js in `.tools/`, and `scripts/npm.sh` runs npm with it, keeping every cache
 ```bash
 scripts/npm.sh ci                 # dependencies, into node_modules/
 scripts/npm.sh start              # run the app from the source; its runtime and data go to .dev-data/
-scripts/npm.sh run dist:linux     # the AppImage, in dist/
+scripts/npm.sh run dist:linux     # the Linux package, dist/DSH-NoDeps-linux-x64.tar.gz
 ```
 
 Running from the source never looks for app updates. Deleting `.dev-data/` also deletes the downloaded dependencies (~800 MB).
@@ -112,7 +114,7 @@ it is not needed to run the app or the installer):
 
 The installer is written to `installer\Output\DSH-NoDeps-Setup.exe`.
 
-**Releases:** pushing a tag like `v1.2.0` builds the Windows installer and the Linux AppImage on GitHub and publishes both as a
+**Releases:** pushing a tag like `v1.2.0` builds the Windows installer and the Linux `.tar.gz` on GitHub and publishes both as a
 release, each with its SHA-256 checksum. A tag like `v1.2.0-rc.1` is published as a pre-release. The workflow is in
 `.github/workflows/release.yml`; running it by hand from the *Actions* tab only builds both as downloadable artifacts.
 

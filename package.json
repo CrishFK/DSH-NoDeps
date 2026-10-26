@@ -10,7 +10,7 @@
   "scripts": {
     "start": "electron .",
     "dist:win": "electron-builder --win --x64 --publish never",
-    "dist:linux": "electron-builder --linux --x64 --publish never"
+    "dist:linux": "electron-builder --linux --x64 --dir --publish never && scripts/package-linux.sh"
   },
   "devDependencies": {
     "electron": "44.9.3",
@@ -40,11 +40,8 @@
       "icon": "app.ico"
     },
     "linux": {
-      "target": "AppImage",
-      "icon": "build/icon.png",
-      "category": "Development",
-      "synopsis": "Self-contained launcher for DeepSeek Harness (unofficial)",
-      "artifactName": "DSH-NoDeps-${arch}.AppImage"
+      "target": "dir",
+      "icon": "build/icon.png"
     }
   },
   "allowScripts": {

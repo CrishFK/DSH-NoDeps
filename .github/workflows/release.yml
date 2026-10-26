@@ -1,6 +1,6 @@
 name: Release
 
-# Builds the Windows installer and the Linux AppImage and publishes them as a GitHub release when a version tag is
+# Builds the Windows installer and the Linux .tar.gz and publishes them as a GitHub release when a version tag is
 # pushed:
 #   git tag v2.0.0 && git push origin v2.0.0
 # Tags like v2.0.0-rc.1 are published as pre-releases.
@@ -127,25 +127,26 @@ jobs:
           key: electron-linux-${{ hashFiles('package-lock.json') }}
           restore-keys: electron-linux-
 
-      - name: Build the AppImage
+      - name: Build the Linux package
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           npm ci
-          npx electron-builder --linux AppImage --x64 --publish never "-c.extraMetadata.version=$VERSION"
+          npx electron-builder --linux --x64 --dir --publish never "-c.extraMetadata.version=$VERSION"
+          scripts/package-linux.sh
 
       - name: Checksum
         working-directory: dist
         run: |
-          sha256sum DSH-NoDeps-x86_64.AppImage > DSH-NoDeps-x86_64.AppImage.sha256
-          cat DSH-NoDeps-x86_64.AppImage.sha256
+          sha256sum DSH-NoDeps-linux-x64.tar.gz > DSH-NoDeps-linux-x64.tar.gz.sha256
+          cat DSH-NoDeps-linux-x64.tar.gz.sha256
 
       - uses: actions/upload-artifact@v4
         with:
           name: linux
           path: |
-            dist/DSH-NoDeps-x86_64.AppImage
-            dist/DSH-NoDeps-x86_64.AppImage.sha256
+            dist/DSH-NoDeps-linux-x64.tar.gz
+            dist/DSH-NoDeps-linux-x64.tar.gz.sha256
           if-no-files-found: error
 
   release:
@@ -168,7 +169,7 @@ jobs:
           args=(
             "$GITHUB_REF_NAME"
             out/DSH-NoDeps-Setup.exe out/DSH-NoDeps-Setup.exe.sha256
-            out/DSH-NoDeps-x86_64.AppImage out/DSH-NoDeps-x86_64.AppImage.sha256
+            out/DSH-NoDeps-linux-x64.tar.gz out/DSH-NoDeps-linux-x64.tar.gz.sha256
             --repo "$GITHUB_REPOSITORY"
             --title "DSH NoDeps $VERSION"
             --notes 'Unofficial launcher for the official DeepSeek Harness. Not affiliated with DeepSeek. See DISCLAIMER.md.'

@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
 const { spawn, spawnSync } = require('node:child_process');
@@ -48,6 +49,7 @@ async function start() {
   Menu.setApplicationMenu(null);
   paths.writeInstallMarker();
   fs.mkdirSync(paths.data, { recursive: true });
+  addToLinuxMenu();
   // The profile of the WebView2 builds (1.0.x) cannot be read by this browser; it is just dead weight now.
   fs.rm(path.join(paths.data, 'WebView2'), { recursive: true, force: true }, () => { });
 
@@ -70,6 +72,41 @@ async function start() {
   if (bounds?.maximized) win.maximize();
   win.show();
   await run();
+}
+
+/**
+ * Linux: puts the app in the desktop's application menu, the way the Windows installer adds a Start menu shortcut.
+ * The entry points at this folder's launcher; after moving the folder, opening it once from there fixes the entry.
+ */
+function addToLinuxMenu() {
+  if (process.platform !== 'linux' || !app.isPackaged) return;
+  try {
+    const launcher = path.join(paths.linuxAppFolder, 'dsh-nodeps');
+    if (!fs.existsSync(launcher)) return;
+    // The menu needs the icon as a real file; the one in the app is inside app.asar.
+    const iconFile = path.join(paths.data, 'icon.png');
+    const iconData = fs.readFileSync(icon);
+    if (!fs.existsSync(iconFile) || !fs.readFileSync(iconFile).equals(iconData)) fs.writeFileSync(iconFile, iconData);
+
+    const quote = (s) => '"' + s.replace(/(["`$\\])/g, '\\$1') + '"';
+    const entry = [
+      '[Desktop Entry]',
+      'Type=Application',
+      `Name=${Title}`,
+      'Comment=Self-contained launcher for DeepSeek Harness (unofficial)',
+      `Exec=${quote(launcher)}`,
+      `Icon=${iconFile}`,
+      'Terminal=false',
+      'Categories=Development;',
+      'StartupWMClass=DshLauncher', // Electron's app id comes from desktopName in package.json
+      '',
+    ].join('\n');
+    const dir = path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'applications');
+    const file = path.join(dir, 'DshLauncher.desktop');
+    if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') === entry) return;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, entry, { mode: 0o755 });
+  } catch { }
 }
 
 function setStatus(text) {
@@ -127,7 +164,7 @@ function isLoopback(url) {
 /**
  * Looks for a newer release of DSH NoDeps on GitHub. If the user says yes it downloads the new build (with a
  * progress bar), verifies its SHA-256 and hands over to it: on Windows the installer runs silently and starts the
- * app again, on Linux the new AppImage replaces this one and is started. Offline, or with no releases, it says
+ * app again, on Linux the new app/ folder replaces this one and is started. Offline, or with no releases, it says
  * nothing.
  */
 async function checkAppUpdate() {
@@ -157,17 +194,10 @@ async function checkAppUpdate() {
   try {
     // Release the single-instance lock first, so the new version can start while this one is closing.
     app.releaseSingleInstanceLock();
-    if (process.platform === 'win32') {
-      // /SILENT shows only the installer's own progress window; /relaunch=1 starts the app when it finishes.
-      spawn(file, ['/SILENT', '/NORESTART', '/relaunch=1'], { detached: true, stdio: 'ignore' }).unref();
-    } else {
-      const target = appUpdate.replaceableAppImage();
-      fs.chmodSync(file, 0o755);
-      fs.renameSync(file, target); // this process keeps running from the old file until it exits
-      spawn(target, [], { detached: true, stdio: 'ignore' }).unref();
-    }
+    appUpdate.install(file);
     win.close();
   } catch (e) {
+    app.requestSingleInstanceLock();
     await message(win, { type: 'warning', message: 'Could not install the new version.', detail: e.message });
   }
 }

@@ -2,6 +2,7 @@
 // verify its SHA-256 and hand over to it. Nothing here runs unless the user says yes.
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawn, spawnSync } = require('node:child_process');
 const { app } = require('electron');
 const paths = require('./paths');
 const toolchain = require('./toolchain');
@@ -9,28 +10,19 @@ const toolchain = require('./toolchain');
 const Repo = 'CrishFK/DSH-NoDeps';
 const DownloadPrefix = `https://github.com/${Repo}/releases/download/`;
 const Headers = { 'User-Agent': 'DSH-NoDeps/1', Accept: 'application/vnd.github+json' };
+const isWindows = process.platform === 'win32';
 
-/** The release asset for this system: the installer on Windows, the AppImage on Linux. */
-const Asset = process.platform === 'win32' ? 'DSH-NoDeps-Setup.exe' : 'DSH-NoDeps-x86_64.AppImage';
+/** The release asset for this system: the installer on Windows, the packed app folder on Linux. */
+const Asset = isWindows ? 'DSH-NoDeps-Setup.exe' : 'DSH-NoDeps-linux-x64.tar.gz';
 
 /** The version of this build, e.g. "1.2.0" (set from the git tag by the release workflow). */
 const currentVersion = app.getVersion();
 
-/** Where the Windows installer is downloaded to: inside the install folder, so it never lands anywhere else. */
+/** Where the update is downloaded to: inside the app's folder, so it never lands anywhere else. */
 const updateDir = path.join(paths.base, 'update');
 
-/**
- * The running AppImage, when it can be replaced in place: the folder that holds it must be writable, because the new
- * file is downloaded next to it and then renamed over it.
- */
-function replaceableAppImage() {
-  const file = process.env.APPIMAGE;
-  if (process.platform !== 'linux' || !file || !app.isPackaged) return null;
-  try {
-    fs.accessSync(path.dirname(file), fs.constants.W_OK);
-    return file;
-  } catch { return null; }
-}
+/** Linux: the folder with the app's files, replaced as a whole by an update. */
+const linuxAppDir = path.join(paths.linuxAppFolder, 'app');
 
 /** The newest release if it is newer than this build; null if up to date, offline or the repo has no releases. */
 async function check(signal) {
@@ -77,10 +69,17 @@ function pickNewest(releases, current) {
   return best !== null && toolchain.compareVersions(best.version, current) > 0 ? best : null;
 }
 
-/** True when this build can install the update itself; otherwise the user is sent to the download page. */
+/**
+ * True when this build can install the update itself; otherwise the user is sent to the download page. On Linux
+ * the app's folder must be writable, since its app/ folder is replaced.
+ */
 function canSelfUpdate(update) {
-  if (!update.fileUrl || !update.checksumUrl) return false;
-  return process.platform === 'win32' ? app.isPackaged : replaceableAppImage() !== null;
+  if (!update.fileUrl || !update.checksumUrl || !app.isPackaged) return false;
+  if (isWindows) return true;
+  try {
+    fs.accessSync(paths.linuxAppFolder, fs.constants.W_OK);
+    return fs.existsSync(path.join(linuxAppDir, 'DshLauncher'));
+  } catch { return false; }
 }
 
 /**
@@ -92,10 +91,8 @@ async function downloadAndVerify(update, progress, signal) {
   const m = /\b([0-9a-fA-F]{64})\b/.exec(checksumText);
   if (!m) throw new Error("The release's checksum file does not contain a SHA-256 value.");
 
-  // An AppImage is downloaded next to the running one, so that the final rename stays on the same disk.
-  const dir = process.platform === 'win32' ? updateDir : path.dirname(replaceableAppImage());
-  fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, process.platform === 'win32' ? Asset : `.${Asset}.download`);
+  fs.mkdirSync(updateDir, { recursive: true });
+  const file = path.join(updateDir, Asset);
   try {
     await toolchain.download(update.fileUrl, file, progress, signal);
     if ((await toolchain.sha256(file)) !== m[1].toLowerCase())
@@ -107,11 +104,51 @@ async function downloadAndVerify(update, progress, signal) {
   }
 }
 
-/** Removes a leftover download from a previous update. Failure is harmless: it is retried next start. */
-function cleanLeftovers() {
-  try { fs.rmSync(updateDir, { recursive: true, force: true }); } catch { }
-  const appImage = replaceableAppImage();
-  if (appImage) try { fs.rmSync(path.join(path.dirname(appImage), `.${Asset}.download`), { force: true }); } catch { }
+/**
+ * Hands over to the verified download and starts the new version; the caller then closes this one.
+ * Windows: the installer runs silently (/SILENT shows only its progress window) and starts the app when it finishes
+ * (/relaunch=1). Linux: the new app/ folder replaces this one (this process keeps running from the old files until it
+ * exits) and the new version is started.
+ */
+function install(file) {
+  if (isWindows) {
+    spawn(file, ['/SILENT', '/NORESTART', '/relaunch=1'], { detached: true, stdio: 'ignore' }).unref();
+    return;
+  }
+
+  // Unpack next to the app's folder, so that the final renames stay on the same disk.
+  const unpacked = path.join(paths.linuxAppFolder, '.update-unpacked');
+  fs.rmSync(unpacked, { recursive: true, force: true });
+  fs.mkdirSync(unpacked);
+  const tar = spawnSync('tar', ['-xzf', file, '-C', unpacked], { encoding: 'utf8' });
+  if (tar.status !== 0) throw new Error(`Could not unpack the update.\n\n${tar.stderr ?? tar.error?.message ?? ''}`);
+  const newFolder = path.join(unpacked, 'DSH NoDeps');
+  if (!fs.existsSync(path.join(newFolder, 'app', 'DshLauncher')) || !fs.existsSync(path.join(newFolder, 'dsh-nodeps')))
+    throw new Error('The update does not contain what was expected.');
+
+  const old = linuxAppDir + '.old';
+  fs.rmSync(old, { recursive: true, force: true });
+  fs.renameSync(linuxAppDir, old);
+  try {
+    fs.renameSync(path.join(newFolder, 'app'), linuxAppDir);
+  } catch (e) {
+    fs.renameSync(old, linuxAppDir);
+    throw e;
+  }
+  const launcher = path.join(paths.linuxAppFolder, 'dsh-nodeps');
+  fs.copyFileSync(path.join(newFolder, 'dsh-nodeps'), launcher);
+  fs.chmodSync(launcher, 0o755);
+  fs.rmSync(unpacked, { recursive: true, force: true });
+  spawn(launcher, [], { detached: true, stdio: 'ignore' }).unref();
 }
 
-module.exports = { currentVersion, check, canSelfUpdate, downloadAndVerify, cleanLeftovers, replaceableAppImage };
+/** Removes what a previous update left behind. Failure is harmless: it is retried next start. */
+function cleanLeftovers() {
+  try { fs.rmSync(updateDir, { recursive: true, force: true }); } catch { }
+  if (!isWindows && app.isPackaged) {
+    try { fs.rmSync(linuxAppDir + '.old', { recursive: true, force: true }); } catch { }
+    try { fs.rmSync(path.join(paths.linuxAppFolder, '.update-unpacked'), { recursive: true, force: true }); } catch { }
+  }
+}
+
+module.exports = { currentVersion, check, canSelfUpdate, downloadAndVerify, install, cleanLeftovers };
